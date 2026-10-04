@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -68,7 +69,8 @@ func usage(out io.Writer) {
   mod [--config 路径] list
   mod [--config 路径] all
 
-默认配置：当前工作目录下的 mod.yml，可通过 MOD_CONFIG 环境变量覆盖。
+默认配置：优先读取当前工作目录的 mod.yml，不存在时读取用户主目录的 mod.yml。
+MOD_CONFIG 环境变量可指定配置路径。
 --config 的优先级最高，须放在命令前。
 只读取当前目录的 go.mod，按模块路径精确匹配。
 存在 replace 时读取和修改右侧版本，否则读取和修改 require 版本。
@@ -118,6 +120,16 @@ func run(args []string, out io.Writer) error {
 	}
 	if path == "" {
 		path = "mod.yml"
+		if _, err := os.Stat(path); err != nil {
+			if !os.IsNotExist(err) {
+				return errors.New(fmt.Sprintf("检查项目配置 %s 失败：%+v", path, err))
+			}
+			userDir, err := os.UserHomeDir()
+			if err != nil {
+				return errors.New(fmt.Sprintf("获取用户主目录失败：%+v", err))
+			}
+			path = filepath.Join(userDir, "mod.yml")
+		}
 	}
 	modules, err := readConfig(path)
 	if err != nil {
