@@ -7,11 +7,16 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/chzyer/readline"
+	"github.com/manifoldco/promptui"
+	"github.com/mattn/go-colorable"
+	"github.com/mattn/go-isatty"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
@@ -58,6 +63,7 @@ func main() {
 
 func usage(out io.Writer) {
 	fmt.Fprintln(out, `用法：
+  mod [--config 路径]                 方向键选择，空格或回车按默认版本更新
   mod [--config 路径] <简写或序号> [版本或分支]
   mod [--config 路径] list
   mod [--config 路径] all
@@ -76,7 +82,7 @@ all 使用每项配置的默认版本。
 
 配置示例：
 modules:
-  rpc: [test, wesure.com/rpcproto]`)
+  rpc: [wesure.com/rpcproto, test]`)
 }
 
 func run(args []string, out io.Writer) error {
@@ -91,11 +97,11 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 	args = flags.Args()
-	if len(args) == 0 {
-		usage(out)
-		return nil
+	interactive := len(args) == 0
+	command := ""
+	if !interactive {
+		command = args[0]
 	}
-	command := args[0]
 	if command == "help" && len(args) == 1 {
 		usage(out)
 		return nil
@@ -144,6 +150,20 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 	visible := visibleModules(modules, byPath)
+	if interactive {
+		if len(visible) == 0 {
+			_, err := fmt.Fprintln(out, "当前项目没有匹配的配置。")
+			return err
+		}
+		index, err := selectModule(out, visible, byPath)
+		if err != nil {
+			return err
+		}
+		if index < 0 {
+			return nil
+		}
+		command = visible[index].alias
+	}
 	if command == "list" {
 		return listModules(out, visible, byPath)
 	}
@@ -170,13 +190,13 @@ func run(args []string, out io.Writer) error {
 		modules = selected
 	}
 	var edits []replacement
-	var messages []string
+	var messages [][]string
 	matched := false
 	for _, item := range modules {
 		for _, entry := range byPath[item.path] {
 			matched = true
 			if entry.local != "" {
-				messages = append(messages, fmt.Sprintf("跳过 %s (%s)：本地目录替换", item.alias, item.path))
+				messages = append(messages, []string{"跳过", item.alias, "(" + item.path + ")", "本地目录替换", "", ""})
 				continue
 			}
 			oldVersion := entry.version
@@ -184,11 +204,11 @@ func run(args []string, out io.Writer) error {
 				continue
 			}
 			if oldVersion == item.version {
-				messages = append(messages, fmt.Sprintf("不变 %s (%s)：%s", item.alias, item.path, oldVersion))
+				messages = append(messages, []string{"不变", item.alias, "(" + item.path + ")", oldVersion, "", ""})
 				continue
 			}
 			edits = append(edits, replacement{entry.start, entry.end, item.version})
-			messages = append(messages, fmt.Sprintf("更新 %s (%s)：%s -> %s", item.alias, item.path, oldVersion, item.version))
+			messages = append(messages, []string{"更新", item.alias, "(" + item.path + ")", oldVersion, "->", item.version})
 		}
 	}
 	if !matched && command != "all" {
@@ -205,10 +225,7 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 	}
-	for _, message := range messages {
-		fmt.Fprintln(out, message)
-	}
-	return nil
+	return printChanges(out, messages)
 }
 
 func validVersion(version string) bool {
@@ -309,14 +326,14 @@ func readConfig(path string) ([]moduleConfig, error) {
 		if alias == "" || idPattern.MatchString(alias) || strings.ContainsAny(alias, " \t\r\n") || strings.HasPrefix(alias, "-") || alias == "list" || alias == "all" || alias == "help" {
 			return nil, errors.New(fmt.Sprintf("无效或保留的简写：%q", alias))
 		}
-		if len(values) != 2 || !validVersion(values[0]) || values[1] == "" || strings.ContainsAny(values[1], " \t\r\n") {
-			return nil, errors.New(fmt.Sprintf("配置 %s 必须为 [默认版本, 模块路径]，且两个值都必须有效", alias))
+		if len(values) != 2 || values[0] == "" || strings.ContainsAny(values[0], " \t\r\n") || !validVersion(values[1]) {
+			return nil, errors.New(fmt.Sprintf("配置 %s 必须为 [模块路径, 默认版本]，且两个值都必须有效", alias))
 		}
-		if previous, exists := paths[values[1]]; exists {
-			return nil, errors.New(fmt.Sprintf("配置 %s 和 %s 重复指定模块 %s", previous, alias, values[1]))
+		if previous, exists := paths[values[0]]; exists {
+			return nil, errors.New(fmt.Sprintf("配置 %s 和 %s 重复指定模块 %s", previous, alias, values[0]))
 		}
-		paths[values[1]] = alias
-		modules = append(modules, moduleConfig{alias: alias, version: values[0], path: values[1]})
+		paths[values[0]] = alias
+		modules = append(modules, moduleConfig{alias: alias, version: values[1], path: values[0]})
 	}
 	return modules, nil
 }
@@ -339,8 +356,8 @@ func visibleModules(modules []moduleConfig, byPath map[string][]moduleEntry) []m
 	return visible
 }
 
-func listModules(out io.Writer, modules []moduleConfig, byPath map[string][]moduleEntry) error {
-	rows := [][5]string{{"序号", "简写", "模块", "默认版本", "当前版本"}}
+func moduleRows(modules []moduleConfig, byPath map[string][]moduleEntry) [][]string {
+	rows := [][]string{{"序号", "简写", "模块", "默认版本", "当前版本"}}
 	for i, item := range modules {
 		var versions []string
 		seen := make(map[string]bool)
@@ -350,9 +367,18 @@ func listModules(out io.Writer, modules []moduleConfig, byPath map[string][]modu
 				seen[entry.version] = true
 			}
 		}
-		rows = append(rows, [5]string{strconv.Itoa(i + 1), item.alias, item.path, item.version, strings.Join(versions, ", ")})
+		rows = append(rows, []string{strconv.Itoa(i + 1), item.alias, item.path, item.version, strings.Join(versions, ", ")})
 	}
-	var widths [5]int
+	return rows
+}
+
+// 先按未着色文本计算列宽，避免 ANSI 颜色代码影响对齐。
+func alignRows(rows [][]string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	widths := make([]int, len(rows[0]))
+	lines := make([]string, 0, len(rows))
 	for _, row := range rows {
 		for column, cell := range row {
 			if size := displayWidth(cell); size > widths[column] {
@@ -368,15 +394,99 @@ func listModules(out io.Writer, modules []moduleConfig, byPath map[string][]modu
 				line.WriteString(strings.Repeat(" ", widths[column]-displayWidth(cell)+2))
 			}
 		}
-		if _, err := fmt.Fprintln(out, line.String()); err != nil {
+		lines = append(lines, strings.TrimRight(line.String(), " "))
+	}
+	return lines
+}
+
+func listModules(out io.Writer, modules []moduleConfig, byPath map[string][]moduleEntry) error {
+	for _, line := range alignRows(moduleRows(modules, byPath)) {
+		if _, err := fmt.Fprintln(out, line); err != nil {
 			return err
 		}
 	}
-	if len(rows) == 1 {
+	if len(modules) == 0 {
 		_, err := fmt.Fprintln(out, "当前项目没有匹配的配置。")
 		return err
 	}
 	return nil
+}
+
+func isTerminal(file *os.File) bool {
+	return isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())
+}
+
+func useColor(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	_, noColor := os.LookupEnv("NO_COLOR")
+	return ok && isTerminal(file) && !noColor && os.Getenv("TERM") != "dumb"
+}
+
+func printChanges(out io.Writer, rows [][]string) error {
+	colored := useColor(out)
+	writer := out
+	if colored {
+		writer = colorable.NewColorable(out.(*os.File))
+	}
+	for i, line := range alignRows(rows) {
+		if colored {
+			switch rows[i][0] {
+			case "更新":
+				line = "\x1b[32m更新\x1b[0m" + strings.TrimPrefix(line, "更新")
+			case "不变":
+				line = "\x1b[90m不变\x1b[0m" + strings.TrimPrefix(line, "不变")
+			}
+		}
+		if _, err := fmt.Fprintln(writer, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type promptWriter struct{ io.Writer }
+
+func (promptWriter) Close() error { return nil }
+
+type selectionKeyReader struct{ io.ReadCloser }
+
+func (r selectionKeyReader) Read(buffer []byte) (int, error) {
+	n, err := r.ReadCloser.Read(buffer)
+	if n == 1 && buffer[0] == ' ' {
+		buffer[0] = '\r' // 空格与回车使用相同的确认流程。
+	}
+	// Windows RawReader 每次返回一个按键事件，方向键已经转成控制字符。
+	// 仅转换独立的 Esc，避免把方向键或 Alt 组合键误判为取消。
+	if runtime.GOOS == "windows" && n == 1 && buffer[0] == 27 {
+		buffer[0] = 3 // 复用 Ctrl+C 的终端恢复及取消流程。
+	}
+	return n, err
+}
+
+func selectModule(out io.Writer, modules []moduleConfig, byPath map[string][]moduleEntry) (int, error) {
+	file, ok := out.(*os.File)
+	if !ok || !isTerminal(file) || !isTerminal(os.Stdin) {
+		return -1, errors.New("交互选择需要终端，请使用 mod list 查看列表，再通过简写或序号更新")
+	}
+	lines := alignRows(moduleRows(modules, byPath))
+	active := "> {{ . }}"
+	if useColor(out) {
+		active = "> {{ . | cyan }}"
+	}
+	prompt := promptui.Select{
+		Label: "    " + lines[0],
+		Items: lines[1:], Size: 10, HideHelp: true, HideSelected: true,
+		Stdin: selectionKeyReader{readline.Stdin}, Stdout: promptWriter{colorable.NewColorable(file)},
+		Templates: &promptui.SelectTemplates{
+			Label: "{{ . }}", Active: active, Inactive: "  {{ . }}", Selected: "{{ . }}",
+			Details: "↑/↓ 选择模块，空格或回车按默认版本更新，Esc / Ctrl+C 取消",
+		},
+	}
+	index, _, err := prompt.Run()
+	if err == promptui.ErrInterrupt || err == promptui.ErrEOF {
+		return -1, nil
+	}
+	return index, err
 }
 
 // 按终端显示格数计算宽度：中文和全角字符占两格，组合标记不单独占格。
