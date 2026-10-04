@@ -1,0 +1,10 @@
+modules:
+  rpc: [test, wesure.com/rpcproto]
+  common: [test, health/common]
+  app-insure: [master, config/app-insure]
+  app-insure_sale_console: [master, config/app-insure_sale_console]
+  app-pms: [master, config/app-pms]
+  sale-app: [master, configv2/sale-app]
+  gaia-framework: [test, gaia.cn/gaia-framework]
+  gaia-utils: [test, gaia.cn/gaia-utils]
+  proto: [test, health/proto]
