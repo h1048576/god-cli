@@ -149,6 +149,5 @@ func (s *godSession) cleanup() error {
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "；"))
 	}
-	fmt.Fprintln(s.out, "临时 worktree、目录和引用已清理。")
 	return nil
 }

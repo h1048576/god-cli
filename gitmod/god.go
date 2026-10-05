@@ -133,24 +133,29 @@ func runGod(args []string, configPath, remote string, out io.Writer) (result err
 				result = errors.New(fmt.Sprintf("%+v；%+v", result, err))
 			}
 		}
+		var summary []string
 		if err := s.cleanup(); err != nil {
+			summary = append(summary, "临时资源清理失败")
 			if result == nil {
 				result = err
 			} else {
 				result = errors.New(fmt.Sprintf("%+v；清理失败：%+v", result, err))
 			}
+		} else {
+			summary = append(summary, "临时 worktree、目录和引用已清理")
 		}
 		if len(s.pushed) == 0 {
-			fmt.Fprintln(out, "没有已确认推送成功的分支。")
+			summary = append(summary, "没有已确认推送成功的分支")
 		} else {
-			fmt.Fprintf(out, "已推送成功：%s\n", strings.Join(s.pushed, "、"))
+			summary = append(summary, "已推送成功："+strings.Join(s.pushed, "、"))
 		}
 		if len(s.synced) > 0 {
-			fmt.Fprintf(out, "本地已同步：%s\n", strings.Join(s.synced, "、"))
+			summary = append(summary, "本地已同步："+strings.Join(s.synced, "、"))
 		}
 		if len(s.skipped) > 0 {
-			fmt.Fprintf(out, "本地同步未完成：%s\n", strings.Join(s.skipped, "、"))
+			summary = append(summary, "本地同步未完成："+strings.Join(s.skipped, "、"))
 		}
+		fmt.Fprintln(out, strings.Join(summary, "；")+"。")
 	}()
 	fmt.Fprintf(out, "固定模块：%s（%s），目标版本：%s\n", selected.alias, selected.path, selected.version)
 	if err := s.prepare(args[1:]); err != nil {
