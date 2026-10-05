@@ -41,29 +41,31 @@ func run(args []string) error {
 	if remoteMode {
 		return runRemote()
 	}
-	output, err := gitOutput("for-each-ref", "--sort=-refname", "--format=%(HEAD)%09%(refname:lstrip=2)", "refs/heads/")
+	output, err := gitOutput("for-each-ref", "--sort=-refname", "--format=%(HEAD)%09%(refname:lstrip=2)%09%(committerdate:format-local:%Y-%m-%d %H:%M:%S)", "refs/heads/")
 	if err != nil {
 		return err
 	}
-	var branches, labels []string
+	type localBranch struct {
+		name, date string
+	}
+	var branches []localBranch
 	current := ""
+	var currentBranch localBranch
 	for _, line := range strings.Split(strings.TrimRight(output, "\r\n"), "\n") {
-		fields := strings.SplitN(strings.TrimSuffix(line, "\r"), "\t", 2)
-		if len(fields) != 2 {
+		fields := strings.SplitN(strings.TrimSuffix(line, "\r"), "\t", 3)
+		if len(fields) != 3 {
 			continue
 		}
-		name := fields[1]
-		label := name
+		branch := localBranch{name: fields[1], date: fields[2]}
 		if fields[0] == "*" {
-			current = name
+			current = branch.name
+			currentBranch = branch
 			continue
 		}
-		branches = append(branches, name)
-		labels = append(labels, label)
+		branches = append(branches, branch)
 	}
 	if current != "" {
-		branches = append([]string{current}, branches...)
-		labels = append([]string{current + "（当前分支）"}, labels...)
+		branches = append([]localBranch{currentBranch}, branches...)
 	}
 	if len(branches) == 0 {
 		fmt.Println("当前仓库没有可切换的本地分支，请先创建分支并提交。")
@@ -76,6 +78,22 @@ func run(args []string) error {
 	if current == "" {
 		label += "（当前 HEAD 未指向已有本地分支）"
 	}
+	// 名字列按显示宽度对齐，与远程模式的日期列对齐方式一致；搜索时日期和摘要也可作为关键词。
+	labels := make([]string, len(branches))
+	displayNames := make([]string, len(branches))
+	nameWidth := 0
+	for i, branch := range branches {
+		displayNames[i] = branch.name
+		if i == 0 && current != "" {
+			displayNames[i] += "（当前分支）"
+		}
+		if n := branchDisplayWidth(displayNames[i]); n > nameWidth {
+			nameWidth = n
+		}
+	}
+	for i, branch := range branches {
+		labels[i] = displayNames[i] + strings.Repeat(" ", nameWidth-branchDisplayWidth(displayNames[i])+2) + branch.date
+	}
 	_, disabled := os.LookupEnv("NO_COLOR")
 	index, err := selectCircular(label, labels, 15,
 		"↑/k 上一项，↓/j/Ctrl+N 下一项；Tab 选择/搜索；空格/回车确认，Esc 取消",
@@ -87,7 +105,7 @@ func run(args []string) error {
 	if index < 0 {
 		return nil
 	}
-	name := branches[index]
+	name := branches[index].name
 	// 由 Git 检查未提交修改和其他工作区占用，不强制切换或自动暂存。
 	if _, err := gitOutput("switch", "--no-guess", "--", name); err != nil {
 		return err
