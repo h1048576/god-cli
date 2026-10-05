@@ -66,7 +66,7 @@ func usage(out io.Writer) {
   gitmod [--config 路径] all
   gitmod [--config 路径] [--remote origin] god <简写或序号> <分支> [其他分支...]
 
-默认配置：优先读取当前工作目录的 mod.yml，不存在时读取用户主目录的 mod.yml。
+默认配置：优先读取当前工作目录的 mod.yml，不存在时读取用户主目录 .god 目录下的 mod.yml。
 MOD_CONFIG 环境变量可指定配置路径。
 --config 的优先级最高，须放在命令前。
 只读取当前目录的 go.mod，按模块路径精确匹配。

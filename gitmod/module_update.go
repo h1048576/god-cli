@@ -27,7 +27,7 @@ func resolveConfigPath(path string) (string, error) {
 			if err != nil {
 				return "", errors.New(fmt.Sprintf("获取用户主目录失败：%+v", err))
 			}
-			path = filepath.Join(userDir, "mod.yml")
+			path = filepath.Join(userDir, ".god", "mod.yml")
 		}
 	}
 	return path, nil
