@@ -46,8 +46,10 @@ func selectCircular(label string, items []string, size int, help string, input i
 			return nil, 0, true
 		case key == readline.CharTab:
 			searching = !searching
-		case key == '/' && !searching:
-			searching = true
+			if !searching {
+				query = nil
+				filter()
+			}
 		case key == readline.CharNext || (key == 'j' && !searching):
 			if count > 0 {
 				cursor = (cursor + 1) % count
@@ -61,9 +63,6 @@ func selectCircular(label string, items []string, size int, help string, input i
 				query = query[:len(query)-1]
 				filter()
 			}
-		case searching && key == readline.CharCtrlU:
-			query = nil
-			filter()
 		case searching && unicode.IsPrint(key):
 			query = append(query, key)
 			filter()
@@ -90,9 +89,12 @@ func selectCircular(label string, items []string, size int, help string, input i
 		screen.WriteString(label)
 		mode := "选择"
 		if searching {
-			mode = "搜索输入（Tab 返回选择，Ctrl+U 清空）"
+			mode = "搜索"
 		}
-		screen.WriteString(mode + " | 关键词：" + string(query))
+		if len(query) > 0 {
+			mode += "：" + string(query)
+		}
+		screen.WriteString(mode)
 		for row := 0; row < size; row++ {
 			i := start + row
 			text := ""

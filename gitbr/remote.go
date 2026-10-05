@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-colorable"
+	"golang.org/x/text/width"
 	"wesure.cn/msf/errors"
 )
 
@@ -33,7 +35,6 @@ func runRemote() error {
 	cutoff := time.Now().AddDate(0, 0, -30).Unix()
 	var branches []remoteBranch
 	for _, remote := range remotes {
-		fmt.Printf("获取远端 %s 的最新分支...\n", remote)
 		// 显式获取全部 heads，兼容仅配置了单分支 fetch 的仓库；不获取标签。
 		if _, err := gitOutput("fetch", "--prune", "--no-tags", "--no-recurse-submodules", "--", remote,
 			"+refs/heads/*:refs/remotes/"+remote+"/*"); err != nil {
@@ -70,18 +71,24 @@ func runRemote() error {
 		return nil
 	}
 	labels := make([]string, len(branches))
+	nameWidth := 0
+	for _, branch := range branches {
+		if n := branchDisplayWidth(branch.remote + "/" + branch.name); n > nameWidth {
+			nameWidth = n
+		}
+	}
 	for i, branch := range branches {
-		labels[i] = branch.remote + "/" + branch.name + "  " + branch.date
+		name := branch.remote + "/" + branch.name
+		labels[i] = name + strings.Repeat(" ", nameWidth-branchDisplayWidth(name)+2) + branch.date
 	}
 	_, disabled := os.LookupEnv("NO_COLOR")
-	index, err := selectCircular("选择远程分支（最近 30 天提交，最新优先）", labels, 15,
-		"↑/k 上一项，↓/j/Ctrl+N 下一项；/ 搜索，Tab 选择；空格/回车确认，Esc 取消",
+	index, err := selectCircular("远程分支", labels, 15,
+		"↑/k 上一项，↓/j/Ctrl+N 下一项；Tab 选择/搜索；空格/回车确认，Esc 取消",
 		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(os.Stdout)}, !disabled && os.Getenv("TERM") != "dumb")
 	if err != nil {
 		return err
 	}
 	if index < 0 {
-		fmt.Println("已取消切换。")
 		return nil
 	}
 	branch := branches[index]
@@ -111,4 +118,21 @@ func runRemote() error {
 	}
 	fmt.Printf("已切换到本地分支：%s（跟踪 %s/%s）\n", branch.name, branch.remote, branch.name)
 	return nil
+}
+
+// 按终端显示格数补齐列宽，兼容中文、全角字符和组合标记。
+func branchDisplayWidth(value string) int {
+	size := 0
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			size += 2
+		default:
+			size++
+		}
+	}
+	return size
 }

@@ -24,7 +24,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Println("用法：gitbr [--remote]\n默认显示本地分支；--remote 获取所有远端的分支，显示最近 30 天有提交的分支。\n↑/↓ 或 j/k 循环选择，Ctrl+N 下一项，空格或回车切换。\n/ 输入关键词搜索，Tab 返回选择模式，Esc / Ctrl+C 取消。")
+		fmt.Println("用法：gitbr [--remote]\n默认显示本地分支；--remote 获取所有远端的分支，显示最近 30 天有提交的分支。\n↑/↓ 或 j/k 循环选择，Ctrl+N 下一项，空格或回车切换。\nTab 切换选择/搜索，搜索时输入关键词、退格删除，Esc / Ctrl+C 取消。")
 		return nil
 	}
 	remoteMode := len(args) == 1 && args[0] == "--remote"
@@ -72,20 +72,19 @@ func run(args []string) error {
 	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
 		return errors.New("交互选择需要终端，请在 PowerShell、CMD 或 Git Bash 中直接运行 gitbr")
 	}
-	label := "选择本地分支"
+	label := "本地分支"
 	if current == "" {
 		label += "（当前 HEAD 未指向已有本地分支）"
 	}
 	_, disabled := os.LookupEnv("NO_COLOR")
 	index, err := selectCircular(label, labels, 15,
-		"↑/k 上一项，↓/j/Ctrl+N 下一项；/ 搜索，Tab 选择；空格/回车确认，Esc 取消",
+		"↑/k 上一项，↓/j/Ctrl+N 下一项；Tab 选择/搜索；空格/回车确认，Esc 取消",
 		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(os.Stdout)},
 		!disabled && os.Getenv("TERM") != "dumb")
 	if err != nil {
 		return err
 	}
 	if index < 0 {
-		fmt.Println("已取消切换。")
 		return nil
 	}
 	name := branches[index]
