@@ -17,4 +17,15 @@
 - `gitmod`、`gitbr`：module 模式构建，直接执行 `./build.sh`（等价于 `GO111MODULE=on go mod tidy -compat=1.17 && go build .`）
 - `gitmerge`：GOPATH 模式构建，执行 `GO111MODULE=off go build -o gitmerge.exe .`
 
+## 构建和安装
+
+仓库根目录提供两个脚本（Git Bash 中执行）：
+
+```bash
+./build.sh      # 循环进入每个工具目录，执行各自的 build.sh，全部构建
+./install.sh    # 先构建全部，再把生成的 exe 复制到用户主目录 .god 目录下
+```
+
+新机器部署只需克隆仓库后执行 `./install.sh`，并确认 `~/.god` 已加入 `PATH`。某个工具构建或复制失败时脚本会继续处理其余工具，最后以失败状态退出并列出失败项。
+
 错误处理统一使用 Go 标准库 `errors` / `fmt.Errorf`，不依赖内部模块。
