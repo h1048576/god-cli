@@ -24,10 +24,11 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Println("用法：gitbr\n显示本地分支，用 ↑/↓ 选择，空格或回车切换，Esc / Ctrl+C 取消。\n在 Git 工作目录或其子目录中运行，不需要配置文件。")
+		fmt.Println("用法：gitbr [--remote]\n默认显示本地分支；--remote 获取所有远端的分支，显示最近 30 天有提交的分支。\n↑/↓ 或 j/k 循环选择，Ctrl+N 下一项，空格或回车切换。\n/ 输入关键词搜索，Tab 返回选择模式，Esc / Ctrl+C 取消。")
 		return nil
 	}
-	if len(args) != 0 {
+	remoteMode := len(args) == 1 && args[0] == "--remote"
+	if len(args) != 0 && !remoteMode {
 		return errors.New("不支持额外参数，请运行 gitbr --help 查看用法")
 	}
 	inside, err := gitOutput("rev-parse", "--is-inside-work-tree")
@@ -36,6 +37,9 @@ func run(args []string) error {
 	}
 	if strings.TrimSpace(inside) != "true" {
 		return errors.New("请在 Git 工作目录或其子目录中运行")
+	}
+	if remoteMode {
+		return runRemote()
 	}
 	output, err := gitOutput("for-each-ref", "--sort=-refname", "--format=%(HEAD)%09%(refname:lstrip=2)", "refs/heads/")
 	if err != nil {
@@ -74,7 +78,7 @@ func run(args []string) error {
 	}
 	_, disabled := os.LookupEnv("NO_COLOR")
 	index, err := selectCircular(label, labels, 15,
-		"↑/k 上一项，↓/j/Ctrl+N 下一项（循环），空格或回车切换，Esc / Ctrl+C 取消",
+		"↑/k 上一项，↓/j/Ctrl+N 下一项；/ 搜索，Tab 选择；空格/回车确认，Esc 取消",
 		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(os.Stdout)},
 		!disabled && os.Getenv("TERM") != "dumb")
 	if err != nil {
