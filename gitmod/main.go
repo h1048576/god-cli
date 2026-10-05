@@ -57,17 +57,17 @@ type moduleEntry struct {
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "mod: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "gitmod: %+v\n", err)
 		os.Exit(1)
 	}
 }
 
 func usage(out io.Writer) {
 	fmt.Fprintln(out, `用法：
-  mod [--config 路径]                 方向键选择，空格或回车按默认版本更新
-  mod [--config 路径] <简写或序号> [版本或分支]
-  mod [--config 路径] list
-  mod [--config 路径] all
+  gitmod [--config 路径]                 方向键选择，空格或回车按默认版本更新
+  gitmod [--config 路径] <简写或序号> [版本或分支]
+  gitmod [--config 路径] list
+  gitmod [--config 路径] all
 
 默认配置：优先读取当前工作目录的 mod.yml，不存在时读取用户主目录的 mod.yml。
 MOD_CONFIG 环境变量可指定配置路径。
@@ -76,7 +76,7 @@ MOD_CONFIG 环境变量可指定配置路径。
 存在 replace 时读取和修改右侧版本，否则读取和修改 require 版本。
 本地目录替换不修改。
 list 按配置顺序列出有实际版本的模块，并从 1 开始编号。
-数字对应当前项目 list 的序号，例如 mod 1 或 mod 1 master。
+数字对应当前项目 list 的序号，例如 gitmod 1 或 gitmod 1 master。
 修改配置顺序或项目依赖后，序号可能变化，请重新查看 list。
 all 使用每项配置的默认版本。
 零版本 v0.0.0-00010101000000-000000000000 始终跳过。
@@ -88,7 +88,7 @@ modules:
 }
 
 func run(args []string, out io.Writer) error {
-	flags := flag.NewFlagSet("mod", flag.ContinueOnError)
+	flags := flag.NewFlagSet("gitmod", flag.ContinueOnError)
 	flags.SetOutput(out)
 	flags.Usage = func() { usage(out) }
 	configPath := flags.String("config", "", "mod.yml 配置文件的路径")
@@ -109,7 +109,7 @@ func run(args []string, out io.Writer) error {
 		return nil
 	}
 	if len(args) > 2 || ((command == "all" || command == "list") && len(args) != 1) {
-		return errors.New("参数数量错误，请运行 mod --help 查看用法")
+		return errors.New("参数数量错误，请运行 gitmod --help 查看用法")
 	}
 	if len(args) == 2 && !validVersion(args[1]) {
 		return errors.New("版本或分支格式不合法")
@@ -183,7 +183,7 @@ func run(args []string, out io.Writer) error {
 		if idPattern.MatchString(command) {
 			id, err := strconv.Atoi(command)
 			if err != nil || id < 1 || id > len(visible) {
-				return errors.New(fmt.Sprintf("无效的模块序号 %q，请运行 mod list 查看可用序号", command))
+				return errors.New(fmt.Sprintf("无效的模块序号 %q，请运行 gitmod list 查看可用序号", command))
 			}
 			command = visible[id-1].alias
 		}
@@ -478,7 +478,7 @@ func (r selectionKeyReader) Read(buffer []byte) (int, error) {
 func selectModule(out io.Writer, modules []moduleConfig, byPath map[string][]moduleEntry) (int, error) {
 	file, ok := out.(*os.File)
 	if !ok || !isTerminal(file) || !isTerminal(os.Stdin) {
-		return -1, errors.New("交互选择需要终端，请使用 mod list 查看列表，再通过简写或序号更新")
+		return -1, errors.New("交互选择需要终端，请使用 gitmod list 查看列表，再通过简写或序号更新")
 	}
 	lines := alignRows(moduleRows(modules, byPath))
 	active := "> {{ . }}"
