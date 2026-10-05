@@ -1,5 +1,5 @@
 modules:
-  rpc: [wesure.com/rpcproto, test]
+  rpc: [rpcproto, test]
   common: [health/common, test]
   app-insure: [config/app-insure, master]
   app-pms: [config/app-pms, master]

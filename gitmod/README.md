@@ -42,7 +42,7 @@ go build .
 
 ```yaml
 modules:
-  rpc: [wesure.com/rpcproto, test]
+  rpc: [rpcproto, test]
   common: [health/common, test]
   app-insure: [config/app-insure, master]
 ```
@@ -106,9 +106,9 @@ gitmod list
 输出示例：
 
 ```text
-序号  简写         模块                   默认版本  当前版本
-1    rpc         wesure.com/rpcproto    test     v0.0.0-20260924090412-c0ff38d59431
-2    common      health/common          test     v0.0.0-20260509061412-81733ec9d908
+序号  简写    模块           默认版本  当前版本
+1     rpc     rpcproto       test      v0.0.0-20260924090412-c0ff38d59431
+2     common  health/common  test      v0.0.0-20260509061412-81733ec9d908
 ```
 
 ### 跨分支更新、提交和推送

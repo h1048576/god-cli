@@ -83,7 +83,7 @@ god 的序号按当前目录的 list 解析；分支更新失败则停止，不�
 
 配置示例：
 modules:
-  rpc: [wesure.com/rpcproto, test]`)
+  rpc: [rpcproto, test]`)
 }
 
 func run(args []string, out io.Writer) error {
