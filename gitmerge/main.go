@@ -34,8 +34,11 @@ type mergeSession struct {
 	tempDir   string
 	worktree  string
 	refs      string
+	remote    string
 	pushURL   string
 	succeeded []string
+	synced    []string
+	skipped   []string
 	out       io.Writer
 }
 
@@ -69,9 +72,10 @@ func usage(out io.Writer) {
 源分支优先使用本地已提交的版本，本地不存在时使用远端版本。
 目标分支必须已存在于远端，以远端最新提交为准。
 先用 git merge-tree 检查全部目标；有冲突则列出分支和文件，不合并、不推送。
-全部通过后，在临时 detached worktree 中逐个合并并推送，最后清理临时资源。
-不切换当前分支，不修改当前工作区或本地同名目标分支。
-推送失败时停止后续操作；已经推送的分支不会自动回滚。
+全部通过后，在临时 worktree 中逐个合并、推送，并 pull --ff-only 更新本地同名目标分支。
+本地分支不存在或正在其他工作区使用时，提示并跳过本地更新。
+不切换当前工作目录的分支，不修改当前工作区。
+推送或本地更新失败时停止后续操作；已经推送的分支不会自动回滚。
 需要支持 merge-tree --write-tree 的 Git（建议 Git 2.38 或以上）。`)
 }
 
@@ -121,6 +125,11 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	if len(pushURLs) != 1 || strings.TrimSpace(pushURLs[0]) == "" {
 		return errors.New("远端必须只有一个推送地址，避免多个仓库只推送部分成功")
 	}
+	pushURL := strings.TrimSpace(pushURLs[0])
+	if !filepath.IsAbs(pushURL) && !strings.Contains(pushURL, ":") {
+		// 本地仓库的相对路径必须以原工作目录为基准，不能相对于临时 worktree。
+		pushURL = filepath.Join(git.dir, pushURL)
+	}
 	localSource, err := git.optionalCommit("refs/heads/" + branches[0])
 	if err != nil {
 		return err
@@ -131,8 +140,8 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	}
 	session := &mergeSession{
 		git: git, tempDir: tempDir, worktree: filepath.Join(tempDir, "worktree"),
-		refs:    "refs/git-cli-merge/" + filepath.Base(tempDir) + "/",
-		pushURL: strings.TrimSpace(pushURLs[0]), out: out,
+		refs:   "refs/git-cli-merge/" + filepath.Base(tempDir) + "/",
+		remote: *remote, pushURL: pushURL, out: out,
 	}
 	defer func() {
 		if err := session.cleanup(); err != nil {
@@ -146,6 +155,12 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 			fmt.Fprintf(out, "已推送成功：%s\n", strings.Join(session.succeeded, "、"))
 		} else {
 			fmt.Fprintln(out, "没有已确认推送成功的目标分支。")
+		}
+		if len(session.synced) > 0 {
+			fmt.Fprintf(out, "本地已拉取：%s\n", strings.Join(session.synced, "、"))
+		}
+		if len(session.skipped) > 0 {
+			fmt.Fprintf(out, "本地更新已跳过：%s\n", strings.Join(session.skipped, "、"))
 		}
 	}()
 	// 从实际推送地址读取快照，并隔离临时引用，不更新本地分支、远端跟踪分支或 FETCH_HEAD。
@@ -348,8 +363,68 @@ func (s *mergeSession) mergeAndPush(sourceName, source string, target mergeTarge
 		return err
 	}
 	s.succeeded = append(s.succeeded, target.name)
-	fmt.Fprintf(s.out, "[完成] %s 已推送\n", target.name)
+	fmt.Fprintf(s.out, "[已推送] %s\n", target.name)
+	if err := s.pullLocalTarget(target.name); err != nil {
+		return errors.New(fmt.Sprintf("远端分支 %s 已推送，但本地拉取失败：%+v", target.name, err))
+	}
 	return s.removeWorktree()
+}
+
+func (s *mergeSession) pullLocalTarget(name string) error {
+	localHead, err := s.git.optionalCommit("refs/heads/" + name)
+	if err != nil {
+		return err
+	}
+	if localHead == "" {
+		fmt.Fprintf(s.out, "[跳过本地更新] %s：本地分支不存在\n", name)
+		s.skipped = append(s.skipped, name)
+		return nil
+	}
+	worktree, err := s.branchWorktree(name)
+	if err != nil {
+		return err
+	}
+	if worktree != "" {
+		fmt.Fprintf(s.out, "[跳过本地更新] %s：分支正在工作区 %s 中使用，请在该工作区手动拉取\n", name, worktree)
+		s.skipped = append(s.skipped, name)
+		return nil
+	}
+	git := gitClient{ctx: s.git.ctx, dir: s.worktree}
+	fmt.Fprintf(s.out, "[拉取本地分支] %s\n", name)
+	// 复用本次创建的 worktree；Git 自身也会拒绝检出被其他 worktree 占用的分支。
+	if _, err := git.command("-c", "submodule.recurse=false", "switch", "--no-guess", name); err != nil {
+		return err
+	}
+	// 指定实际推送地址和同名分支，避免跟随本地分支原有的 upstream 拉错目标。
+	// 只允许快进，保留本地提交；同时刷新对应的远端跟踪引用。
+	refspec := "+refs/heads/" + name + ":refs/remotes/" + s.remote + "/" + name
+	if _, err := git.command("-c", "submodule.recurse=false", "-c", "branch."+name+".mergeOptions=",
+		"pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-tags", "--no-recurse-submodules",
+		"--refmap=", "--", s.pushURL, refspec); err != nil {
+		return err
+	}
+	s.synced = append(s.synced, name)
+	fmt.Fprintf(s.out, "[完成] %s 已推送，本地分支已拉取\n", name)
+	return nil
+}
+
+func (s *mergeSession) branchWorktree(name string) (string, error) {
+	listing, err := s.git.command("worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return "", err
+	}
+	var path string
+	for _, field := range strings.Split(listing, "\x00") {
+		switch {
+		case strings.HasPrefix(field, "worktree "):
+			path = strings.TrimPrefix(field, "worktree ")
+		case field == "branch refs/heads/"+name:
+			return path, nil
+		case field == "":
+			path = ""
+		}
+	}
+	return "", nil
 }
 
 func (s *mergeSession) removeWorktree() error {
