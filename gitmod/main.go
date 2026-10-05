@@ -14,7 +14,6 @@ import (
 	"unicode"
 
 	"github.com/chzyer/readline"
-	"github.com/manifoldco/promptui"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"golang.org/x/mod/modfile"
@@ -427,24 +426,9 @@ func selectModule(out io.Writer, modules []moduleConfig, byPath map[string][]mod
 		return -1, errors.New("交互选择需要终端，请使用 gitmod list 查看列表，再通过简写或序号更新")
 	}
 	lines := alignRows(moduleRows(modules, byPath))
-	active := "> {{ . }}"
-	if useColor(out) {
-		active = "> {{ . | cyan }}"
-	}
-	prompt := promptui.Select{
-		Label: "    " + lines[0],
-		Items: lines[1:], Size: 10, HideHelp: true, HideSelected: true,
-		Stdin: selectionKeyReader{readline.Stdin}, Stdout: promptWriter{colorable.NewColorable(file)},
-		Templates: &promptui.SelectTemplates{
-			Label: "{{ . }}", Active: active, Inactive: "  {{ . }}", Selected: "{{ . }}",
-			Details: "↑/↓ 选择模块，空格或回车按默认版本更新，Esc / Ctrl+C 取消",
-		},
-	}
-	index, _, err := prompt.Run()
-	if err == promptui.ErrInterrupt || err == promptui.ErrEOF {
-		return -1, nil
-	}
-	return index, err
+	return selectCircular("    "+lines[0], lines[1:], 10,
+		"↑/↓ 或 j/k 循环选择模块，空格或回车按默认版本更新，Esc / Ctrl+C 取消",
+		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(file)}, useColor(out))
 }
 
 // 按终端显示格数计算宽度：中文和全角字符占两格，组合标记不单独占格。

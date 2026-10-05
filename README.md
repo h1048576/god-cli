@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | [gitmod](./gitmod/) | `gitmod` | 管理 `go.mod` 中指定模块的版本，支持 `god` 在临时 worktree 中跨分支更新、提交并推送，详见 [使用说明](./gitmod/README.md) |
 | [gitmerge](./gitmerge/) | `gitmerge` | 预检查全部目标，在临时 worktree 中逐个合并、推送并拉取更新本地分支，详见 [使用说明](./gitmerge/README.md) |
+| [gitbr](./gitbr/) | `gitbr` | 交互选择本地分支，方向键选择，空格或回车切换，详见 [使用说明](./gitbr/README.md) |
 
 ## 目录约定
 
