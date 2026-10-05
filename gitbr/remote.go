@@ -41,7 +41,7 @@ func runRemote() error {
 			return err
 		}
 		prefix := "refs/remotes/" + remote + "/"
-		refs, err := gitOutput("for-each-ref", "--format=%(refname)%09%(symref)%09%(committerdate:unix)%09%(committerdate:short)", prefix)
+		refs, err := gitOutput("for-each-ref", "--format=%(refname)%09%(symref)%09%(committerdate:unix)%09%(committerdate:format-local:%Y-%m-%d %H:%M:%S)", prefix)
 		if err != nil {
 			return err
 		}

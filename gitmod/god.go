@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"strings"
 
 	"golang.org/x/net/context"
-	"wesure.cn/msf/errors"
 )
 
 type godBranch struct {

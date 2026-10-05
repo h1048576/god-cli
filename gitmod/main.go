@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,7 +20,6 @@ import (
 	"golang.org/x/mod/modfile"
 	"golang.org/x/text/width"
 	"gopkg.in/yaml.v3"
-	"wesure.cn/msf/errors"
 )
 
 const zeroVersion = "v0.0.0-00010101000000-000000000000"

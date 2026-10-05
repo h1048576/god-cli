@@ -16,12 +16,17 @@
 
 ## 构建
 
-需要 Go 1.17 及以上。从仓库根目录进入 `gitmod` 目录后构建：
+需要 Go 1.17 及以上。使用目录内的 `go.mod` 和 `go.sum` 管理构建依赖，`build.mod` 不会被普通 `go build` 自动读取。
 
-```sh
+```powershell
 cd gitmod
-go build -o gitmod.exe
+$env:GO111MODULE = 'on'
+go build .
 ```
+
+生成 `gitmod.exe`。如果环境配置了 `GO111MODULE=off`，必须先在当前终端启用模块模式，否则 Go 会到 GOPATH 中查找依赖。
+
+也可以在此目录执行 `./build.ps1`，脚本会在构建期间启用模块模式，完成后恢复原环境设置。首次构建需要依赖缓存或可访问的依赖源，依赖均为公开模块。需要本地离线依赖时，可在模块模式下执行 `go mod vendor`；生成的 `vendor` 目录不纳入版本管理。
 
 ## 配置
 

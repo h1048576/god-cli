@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +11,6 @@ import (
 	"strings"
 
 	"golang.org/x/net/context"
-	"wesure.cn/msf/errors"
 )
 
 type godGit struct {

@@ -2,3 +2,4 @@
 *.exe~
 *.bk
 go.mod
+!/gitmod/go.mod

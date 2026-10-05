@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,6 @@ import (
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
-	"wesure.cn/msf/errors"
 )
 
 func resolveConfigPath(path string) (string, error) {
