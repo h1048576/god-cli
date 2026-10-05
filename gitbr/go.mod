@@ -1,4 +1,4 @@
-module git-cli/gitbr
+module gitbr
 
 go 1.17
 

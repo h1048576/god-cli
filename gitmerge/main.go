@@ -136,13 +136,13 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	tempDir, err := os.MkdirTemp("", "git-cli-merge-")
+	tempDir, err := os.MkdirTemp("", "god-cli-merge-")
 	if err != nil {
 		return fmt.Errorf("创建临时目录失败：%+v", err)
 	}
 	session := &mergeSession{
 		git: git, tempDir: tempDir, worktree: filepath.Join(tempDir, "worktree"),
-		refs:   "refs/git-cli-merge/" + filepath.Base(tempDir) + "/",
+		refs:   "refs/god-cli-merge/" + filepath.Base(tempDir) + "/",
 		remote: *remote, pushURL: pushURL, out: out,
 	}
 	defer func() {
