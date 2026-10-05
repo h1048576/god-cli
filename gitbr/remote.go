@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -12,7 +13,6 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-colorable"
 	"golang.org/x/text/width"
-	"wesure.cn/msf/errors"
 )
 
 type remoteBranch struct {
@@ -52,7 +52,7 @@ func runRemote() error {
 			}
 			stamp, err := strconv.ParseInt(fields[2], 10, 64)
 			if err != nil {
-				return errors.New(fmt.Sprintf("无法读取分支 %s 的提交时间：%+v", fields[0], err))
+				return fmt.Errorf("无法读取分支 %s 的提交时间：%+v", fields[0], err)
 			}
 			if stamp < cutoff {
 				continue
@@ -105,7 +105,7 @@ func runRemote() error {
 		}
 		found = true
 		if fields[1] != branch.ref {
-			return errors.New(fmt.Sprintf("本地分支 %s 已存在，但未关联 %s/%s；请用 gitbr 切换本地分支或先调整上游关联", branch.name, branch.remote, branch.name))
+			return fmt.Errorf("本地分支 %s 已存在，但未关联 %s/%s；请用 gitbr 切换本地分支或先调整上游关联", branch.name, branch.remote, branch.name)
 		}
 	}
 	if found {

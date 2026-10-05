@@ -4,7 +4,7 @@
 
 ## 构建
 
-与 `gitmod` 一样使用本地 Go / GOPATH 依赖环境，依赖 `golang.org/x/net/context` 和 `wesure.cn/msf/errors`。需要 Go 1.17 及以上，以及支持 `git merge-tree --write-tree` 的 Git（建议 2.38 及以上）。
+不使用 Go module，按 GOPATH 模式构建，仅依赖公开模块 `golang.org/x/net/context`。需要 Go 1.17 及以上，以及支持 `git merge-tree --write-tree` 的 Git（建议 2.38 及以上）。
 
 在仓库根目录执行：
 
@@ -12,6 +12,8 @@
 cd gitmerge
 go build -o gitmerge.exe
 ```
+
+如环境已设置 `GO111MODULE=on`，构建前改为 `off`（或临时 `$env:GO111MODULE = 'off'`），否则 Go 会在当前目录找不到 `go.mod` 而报错。
 
 将 `gitmerge.exe` 所在目录加入 `PATH`，即可在需要合并的 Git 仓库中使用。
 

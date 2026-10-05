@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,7 +18,6 @@ import (
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"golang.org/x/net/context"
-	"wesure.cn/msf/errors"
 )
 
 type gitClient struct {
@@ -101,13 +101,13 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	seen := make(map[string]bool)
 	for _, name := range branches {
 		if name == "HEAD" || strings.HasPrefix(name, "-") || strings.HasPrefix(name, "refs/") {
-			return errors.New(fmt.Sprintf("请使用分支短名：%q", name))
+			return fmt.Errorf("请使用分支短名：%q", name)
 		}
 		if _, err := git.command("check-ref-format", "refs/heads/"+name); err != nil {
-			return errors.New(fmt.Sprintf("无效分支名 %q：%+v", name, err))
+			return fmt.Errorf("无效分支名 %q：%+v", name, err)
 		}
 		if seen[name] {
-			return errors.New(fmt.Sprintf("源分支和目标分支不能重复：%s", name))
+			return fmt.Errorf("源分支和目标分支不能重复：%s", name)
 		}
 		seen[name] = true
 	}
@@ -138,7 +138,7 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	}
 	tempDir, err := os.MkdirTemp("", "git-cli-merge-")
 	if err != nil {
-		return errors.New(fmt.Sprintf("创建临时目录失败：%+v", err))
+		return fmt.Errorf("创建临时目录失败：%+v", err)
 	}
 	session := &mergeSession{
 		git: git, tempDir: tempDir, worktree: filepath.Join(tempDir, "worktree"),
@@ -152,7 +152,7 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 			if result == nil {
 				result = err
 			} else {
-				result = errors.New(fmt.Sprintf("%+v；清理失败：%+v", result, err))
+				result = fmt.Errorf("%+v；清理失败：%+v", result, err)
 			}
 		} else {
 			summary = append(summary, "临时 worktree、目录和引用已清理")
@@ -183,7 +183,7 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 			return err
 		}
 		if source == "" {
-			return errors.New(fmt.Sprintf("源分支 %s 在本地和远端均不存在", branches[0]))
+			return fmt.Errorf("源分支 %s 在本地和远端均不存在", branches[0])
 		}
 		fmt.Fprintf(out, "源分支：%s（远端，%s）\n", branches[0], source)
 	} else {
@@ -195,7 +195,7 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	}
 	for _, target := range targets {
 		if err := session.mergeAndPush(branches[0], source, target); err != nil {
-			return errors.New(fmt.Sprintf("处理目标分支 %s 失败，已停止后续操作：%+v", target.name, err))
+			return fmt.Errorf("处理目标分支 %s 失败，已停止后续操作：%+v", target.name, err)
 		}
 	}
 	return nil
@@ -235,7 +235,7 @@ func (g gitClient) execute(args ...string) (string, string, int, error) {
 func (g gitClient) command(args ...string) (string, error) {
 	stdout, stderr, _, err := g.execute(args...)
 	if err != nil {
-		return "", errors.New(fmt.Sprintf("git %s 失败：%+v\n%s%s", args[0], err, stderr, stdout))
+		return "", fmt.Errorf("git %s 失败：%+v\n%s%s", args[0], err, stderr, stdout)
 	}
 	return stdout, nil
 }
@@ -246,7 +246,7 @@ func (g gitClient) optionalCommit(ref string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", errors.New(fmt.Sprintf("读取引用 %s 失败：%+v\n%s", ref, err, stderr))
+		return "", fmt.Errorf("读取引用 %s 失败：%+v\n%s", ref, err, stderr)
 	}
 	return strings.TrimSpace(stdout), nil
 }
@@ -388,7 +388,7 @@ func (s *mergeSession) mergeAndPush(sourceName, source string, target mergeTarge
 	s.succeeded = append(s.succeeded, target.name)
 	fmt.Fprintf(s.out, "，[已推送] %s", target.name)
 	if err := s.pullLocalTarget(target.name); err != nil {
-		return errors.New(fmt.Sprintf("远端分支 %s 已推送，但本地拉取失败：%+v", target.name, err))
+		return fmt.Errorf("远端分支 %s 已推送，但本地拉取失败：%+v", target.name, err)
 	}
 	return s.removeWorktree()
 }
@@ -483,7 +483,7 @@ func (s *mergeSession) removeWorktree() error {
 		}
 		// 仅移除本次创建的临时目录；失败的合并可能在其中留下冲突文件。
 		if _, err := git.command("worktree", "remove", "--force", s.worktree); err != nil {
-			return errors.New(fmt.Sprintf("移除临时 worktree %s 失败：%+v", s.worktree, err))
+			return fmt.Errorf("移除临时 worktree %s 失败：%+v", s.worktree, err)
 		}
 	}
 	return nil

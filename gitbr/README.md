@@ -36,7 +36,15 @@ gitbr --remote
 
 ## 构建和使用
 
-需要 Go 1.17 及以上，依赖版本与 gitmod 保持一致。使用此目录的 `go.mod` 构建（`wesure.cn/msf/errors` 依赖需在本机缓存或可访问的内部依赖源中提供）：
+需要 Go 1.17 及以上，依赖均为公开模块，依赖版本与 gitmod 保持一致。使用此目录的 `go.mod` 构建。
+
+Git Bash 中执行：
+
+```bash
+./build.sh
+```
+
+或 PowerShell 中手动启用模块模式后构建：
 
 ```powershell
 $env:GO111MODULE = 'on'

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
-	"wesure.cn/msf/errors"
 )
 
 func main() {
@@ -102,7 +102,7 @@ func gitOutput(args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return "", errors.New(fmt.Sprintf("git %s 失败：%+v\n%s", args[0], err, strings.TrimSpace(stderr.String())))
+		return "", fmt.Errorf("git %s 失败：%+v\n%s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
 }

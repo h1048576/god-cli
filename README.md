@@ -12,4 +12,9 @@
 
 ## 目录约定
 
-新增 CLI 时，在仓库根目录下创建对应目录，将该工具的源码、配置和文档放入其中，并更新上方工具列表。各工具的构建操作在各自目录中执行。
+新增 CLI 时，在仓库根目录下创建对应目录，将该工具的源码、配置和文档放入其中，并更新上方工具列表。各工具的构建操作在各自目录中执行：
+
+- `gitmod`、`gitbr`：module 模式构建，直接执行 `./build.sh`（等价于 `GO111MODULE=on go mod tidy -compat=1.17 && go build .`）
+- `gitmerge`：GOPATH 模式构建，执行 `GO111MODULE=off go build -o gitmerge.exe .`
+
+错误处理统一使用 Go 标准库 `errors` / `fmt.Errorf`，不依赖内部模块。
