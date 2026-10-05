@@ -15,13 +15,14 @@ import (
 )
 
 type godBranch struct {
-	name      string
-	worktree  string
-	localHead string
-	readyHead string
-	original  []byte
-	updated   []byte
-	messages  [][]string
+	name       string
+	worktree   string
+	localHead  string
+	readyHead  string
+	pushedHead string
+	original   []byte
+	updated    []byte
+	messages   [][]string
 }
 
 type godSession struct {
@@ -125,6 +126,13 @@ func runGod(args []string, configPath, remote string, out io.Writer) (result err
 		remote: remote, pushURL: pushURL, modPath: filepath.ToSlash(relative), module: selected, out: out,
 	}
 	defer func() {
+		if err := s.syncPushedBranches(); err != nil {
+			if result == nil {
+				result = err
+			} else {
+				result = errors.New(fmt.Sprintf("%+v；%+v", result, err))
+			}
+		}
 		if err := s.cleanup(); err != nil {
 			if result == nil {
 				result = err
@@ -141,7 +149,7 @@ func runGod(args []string, configPath, remote string, out io.Writer) (result err
 			fmt.Fprintf(out, "本地已同步：%s\n", strings.Join(s.synced, "、"))
 		}
 		if len(s.skipped) > 0 {
-			fmt.Fprintf(out, "本地同步已跳过：%s\n", strings.Join(s.skipped, "、"))
+			fmt.Fprintf(out, "本地同步未完成：%s\n", strings.Join(s.skipped, "、"))
 		}
 	}()
 	fmt.Fprintf(out, "固定模块：%s（%s），目标版本：%s\n", selected.alias, selected.path, selected.version)
@@ -329,20 +337,53 @@ func (s *godSession) updateAndPush(branch *godBranch) error {
 		return errors.New(fmt.Sprintf("推送失败，本次提交为 %s：%+v", head, err))
 	}
 	s.pushed = append(s.pushed, branch.name)
-	if _, err := s.git.command("update-ref", "refs/remotes/"+s.remote+"/"+branch.name, head); err != nil {
-		return errors.New(fmt.Sprintf("远端已推送，但更新远端跟踪引用失败：%+v", err))
+	branch.pushedHead = head
+	fmt.Fprintf(s.out, "[推送完成] %s\n", branch.name)
+	return nil
+}
+
+// 推送阶段结束后同步所有已成功推送的分支；一个分支失败不阻止其余分支同步。
+func (s *godSession) syncPushedBranches() error {
+	if len(s.pushed) == 0 {
+		return nil
 	}
-	if err := s.syncLocal(branch, head); err != nil {
-		return errors.New(fmt.Sprintf("远端已推送，但本地分支同步失败：%+v", err))
+	fmt.Fprintln(s.out, "同步本地目标分支...")
+	var failures []string
+	for _, branch := range s.branches {
+		if branch.pushedHead == "" {
+			continue
+		}
+		if err := s.syncLocal(branch, branch.pushedHead); err != nil {
+			s.skipped = append(s.skipped, branch.name)
+			failures = append(failures, fmt.Sprintf("%s：%+v", branch.name, err))
+			fmt.Fprintf(s.out, "[本地同步失败] %s：%+v\n", branch.name, err)
+			continue
+		}
+		s.synced = append(s.synced, branch.name)
+		fmt.Fprintf(s.out, "[本地已同步] %s\n", branch.name)
 	}
-	fmt.Fprintf(s.out, "[完成] %s\n", branch.name)
+	if len(failures) > 0 {
+		return errors.New("远端推送结果已保留，部分本地分支未更新：" + strings.Join(failures, "；"))
+	}
 	return nil
 }
 
 func (s *godSession) syncLocal(branch *godBranch, head string) error {
-	if branch.localHead == "" {
-		fmt.Fprintf(s.out, "[跳过本地同步] %s：本地分支不存在\n", branch.name)
-		s.skipped = append(s.skipped, branch.name)
+	if _, err := s.git.command("update-ref", "refs/remotes/"+s.remote+"/"+branch.name, head); err != nil {
+		return err
+	}
+	localHead, err := s.git.optionalCommit("refs/heads/" + branch.name)
+	if err != nil {
+		return err
+	}
+	git := godGit{ctx: s.git.ctx, dir: branch.worktree}
+	if localHead == "" {
+		if _, err := git.command("-c", "submodule.recurse=false", "switch", "--no-track", "-c", branch.name, head); err != nil {
+			return err
+		}
+		return nil
+	}
+	if localHead == head {
 		return nil
 	}
 	worktrees, err := s.git.worktrees()
@@ -351,21 +392,34 @@ func (s *godSession) syncLocal(branch *godBranch, head string) error {
 	}
 	for _, worktree := range worktrees {
 		if worktree.branch == "refs/heads/"+branch.name {
-			fmt.Fprintf(s.out, "[跳过本地同步] %s：正在工作区 %s 中使用，请之后手动拉取\n", branch.name, worktree.path)
-			s.skipped = append(s.skipped, branch.name)
-			return nil
+			git.dir = worktree.path
+			currentBranch, err := git.command("symbolic-ref", "--quiet", "HEAD")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(currentBranch) != "refs/heads/"+branch.name {
+				return errors.New(fmt.Sprintf("工作区 %s 的分支发生变化，请手动拉取", worktree.path))
+			}
+			status, err := git.command("status", "--porcelain", "--untracked-files=normal")
+			if err != nil {
+				return err
+			}
+			if status != "" {
+				return errors.New(fmt.Sprintf("工作区 %s 存在未提交修改，已保留现场，请处理后手动拉取", worktree.path))
+			}
+			return fastForwardGodBranch(git, branch.name, head)
 		}
 	}
-	git := godGit{ctx: s.git.ctx, dir: branch.worktree}
 	if _, err := git.command("-c", "submodule.recurse=false", "switch", "--no-guess", branch.name); err != nil {
 		return err
 	}
-	if _, err := git.command("-c", "submodule.recurse=false", "-c", "branch."+branch.name+".mergeOptions=",
-		"merge", "--ff-only", "--no-autostash", "--no-edit", head); err != nil {
-		return err
-	}
-	s.synced = append(s.synced, branch.name)
-	return nil
+	return fastForwardGodBranch(git, branch.name, head)
+}
+
+func fastForwardGodBranch(git godGit, name, head string) error {
+	_, err := git.command("-c", "submodule.recurse=false", "-c", "branch."+name+".mergeOptions=",
+		"merge", "--ff-only", "--no-autostash", "--no-edit", head)
+	return err
 }
 
 func godRelativePath(path string) bool {
