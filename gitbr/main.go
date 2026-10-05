@@ -74,7 +74,7 @@ func run(args []string) error {
 	}
 	_, disabled := os.LookupEnv("NO_COLOR")
 	index, err := selectCircular(label, labels, 15,
-		"↑/↓ 或 j/k 循环选择分支，空格或回车切换，Esc / Ctrl+C 取消",
+		"↑/k 上一项，↓/j/Ctrl+N 下一项（循环），空格或回车切换，Esc / Ctrl+C 取消",
 		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(os.Stdout)},
 		!disabled && os.Getenv("TERM") != "dumb")
 	if err != nil {

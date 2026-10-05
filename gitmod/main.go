@@ -427,7 +427,7 @@ func selectModule(out io.Writer, modules []moduleConfig, byPath map[string][]mod
 	}
 	lines := alignRows(moduleRows(modules, byPath))
 	return selectCircular("    "+lines[0], lines[1:], 10,
-		"↑/↓ 或 j/k 循环选择模块，空格或回车按默认版本更新，Esc / Ctrl+C 取消",
+		"↑/k 上一项，↓/j/Ctrl+N 下一项（循环），空格或回车更新，Esc / Ctrl+C 取消",
 		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(file)}, useColor(out))
 }
 
