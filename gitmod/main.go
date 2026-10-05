@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -19,8 +18,6 @@ import (
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"golang.org/x/mod/modfile"
-	"golang.org/x/mod/module"
-	"golang.org/x/mod/semver"
 	"golang.org/x/text/width"
 	"gopkg.in/yaml.v3"
 	"wesure.cn/msf/errors"
@@ -68,6 +65,7 @@ func usage(out io.Writer) {
   gitmod [--config 路径] <简写或序号> [版本或分支]
   gitmod [--config 路径] list
   gitmod [--config 路径] all
+  gitmod [--config 路径] [--remote origin] god <简写或序号> <分支> [其他分支...]
 
 默认配置：优先读取当前工作目录的 mod.yml，不存在时读取用户主目录的 mod.yml。
 MOD_CONFIG 环境变量可指定配置路径。
@@ -79,6 +77,8 @@ list 按配置顺序列出有实际版本的模块，并从 1 开始编号。
 数字对应当前项目 list 的序号，例如 gitmod 1 或 gitmod 1 master。
 修改配置顺序或项目依赖后，序号可能变化，请重新查看 list。
 all 使用每项配置的默认版本。
+god 先在临时 worktree 中更新全部分支，全部成功后更新固定模块、以 - 提交并逐个推送。
+god 的序号按当前目录的 list 解析；分支更新失败则停止，不修改任何分支的模块。
 零版本 v0.0.0-00010101000000-000000000000 始终跳过。
 保留注释和格式，不执行 go get 或 go mod tidy，不修改 go.sum。
 
@@ -92,6 +92,7 @@ func run(args []string, out io.Writer) error {
 	flags.SetOutput(out)
 	flags.Usage = func() { usage(out) }
 	configPath := flags.String("config", "", "mod.yml 配置文件的路径")
+	remote := flags.String("remote", "origin", "god 使用的远端，须放在 god 之前")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -108,28 +109,18 @@ func run(args []string, out io.Writer) error {
 		usage(out)
 		return nil
 	}
+	if command == "god" {
+		return runGod(args[1:], *configPath, *remote, out)
+	}
 	if len(args) > 2 || ((command == "all" || command == "list") && len(args) != 1) {
 		return errors.New("参数数量错误，请运行 gitmod --help 查看用法")
 	}
 	if len(args) == 2 && !validVersion(args[1]) {
 		return errors.New("版本或分支格式不合法")
 	}
-	path := *configPath
-	if path == "" {
-		path = os.Getenv("MOD_CONFIG")
-	}
-	if path == "" {
-		path = "mod.yml"
-		if _, err := os.Stat(path); err != nil {
-			if !os.IsNotExist(err) {
-				return errors.New(fmt.Sprintf("检查项目配置 %s 失败：%+v", path, err))
-			}
-			userDir, err := os.UserHomeDir()
-			if err != nil {
-				return errors.New(fmt.Sprintf("获取用户主目录失败：%+v", err))
-			}
-			path = filepath.Join(userDir, "mod.yml")
-		}
+	path, err := resolveConfigPath(*configPath)
+	if err != nil {
+		return err
 	}
 	modules, err := readConfig(path)
 	if err != nil {
@@ -139,25 +130,7 @@ func run(args []string, out io.Writer) error {
 	if err != nil {
 		return errors.New(fmt.Sprintf("读取当前目录的 go.mod 失败：%+v", err))
 	}
-	// 分支名仅在解析阶段映射成合法版本；输出仍直接修改原始字节。
-	file, err := modfile.Parse("go.mod", data, func(path string, version string) (string, error) {
-		if semver.IsValid(version) {
-			return version, nil
-		}
-		_, major, ok := module.SplitPathVersion(path)
-		if !ok {
-			return "", errors.New(fmt.Sprintf("无效的模块路径：%s", path))
-		}
-		major = strings.TrimSuffix(strings.TrimLeft(major, "/."), "-unstable")
-		if major == "" {
-			major = "v0"
-		}
-		return major + ".0.0", nil
-	})
-	if err != nil {
-		return errors.New(fmt.Sprintf("解析 go.mod 失败：%+v", err))
-	}
-	byPath, err := collectModules(data, file)
+	byPath, err := parseModuleEntries(data)
 	if err != nil {
 		return err
 	}
@@ -201,39 +174,12 @@ func run(args []string, out io.Writer) error {
 		}
 		modules = selected
 	}
-	var edits []replacement
-	var messages [][]string
-	matched := false
-	for _, item := range modules {
-		for _, entry := range byPath[item.path] {
-			matched = true
-			if entry.local != "" {
-				messages = append(messages, []string{"跳过", item.alias, "(" + item.path + ")", "本地目录替换", "", ""})
-				continue
-			}
-			oldVersion := entry.version
-			if oldVersion == zeroVersion {
-				continue
-			}
-			if oldVersion == item.version {
-				messages = append(messages, []string{"不变", item.alias, "(" + item.path + ")", oldVersion, "", ""})
-				continue
-			}
-			edits = append(edits, replacement{entry.start, entry.end, item.version})
-			messages = append(messages, []string{"更新", item.alias, "(" + item.path + ")", oldVersion, "->", item.version})
-		}
-	}
+	updated, messages, matched := prepareModuleUpdate(data, byPath, modules)
 	if !matched && command != "all" {
 		return errors.New(fmt.Sprintf("当前 go.mod 的 require 或 replace 中没有模块 %s", modules[0].path))
 	}
-	if len(edits) > 0 {
-		// 从后向前修改字节区间，避免前面的替换改变后续位置。
-		sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
-		updated := append([]byte(nil), data...)
-		for _, edit := range edits {
-			updated = append(updated[:edit.start], append([]byte(edit.version), updated[edit.end:]...)...)
-		}
-		if err := saveMod(data, updated); err != nil {
+	if !bytes.Equal(data, updated) {
+		if err := saveModAt("go.mod", data, updated); err != nil {
 			return err
 		}
 	}
@@ -335,7 +281,7 @@ func readConfig(path string) ([]moduleConfig, error) {
 	for i := 0; i < len(cfg.Modules.Content); i += 2 {
 		alias := cfg.Modules.Content[i].Value
 		values := valuesByAlias[alias]
-		if alias == "" || idPattern.MatchString(alias) || strings.ContainsAny(alias, " \t\r\n") || strings.HasPrefix(alias, "-") || alias == "list" || alias == "all" || alias == "help" {
+		if alias == "" || idPattern.MatchString(alias) || strings.ContainsAny(alias, " \t\r\n") || strings.HasPrefix(alias, "-") || alias == "list" || alias == "all" || alias == "help" || alias == "god" {
 			return nil, errors.New(fmt.Sprintf("无效或保留的简写：%q", alias))
 		}
 		if len(values) != 2 || values[0] == "" || strings.ContainsAny(values[0], " \t\r\n") || !validVersion(values[1]) {
@@ -518,12 +464,12 @@ func displayWidth(value string) int {
 	return size
 }
 
-func saveMod(original, updated []byte) error {
-	info, err := os.Stat("go.mod")
+func saveModAt(path string, original, updated []byte) error {
+	info, err := os.Stat(path)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(".", ".mod-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mod-*")
 	if err != nil {
 		return err
 	}
@@ -538,12 +484,12 @@ func saveMod(original, updated []byte) error {
 	if err := os.Chmod(tmp.Name(), info.Mode().Perm()); err != nil {
 		return err
 	}
-	current, err := os.ReadFile("go.mod")
+	current, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	if !bytes.Equal(original, current) {
 		return errors.New("go.mod 在处理期间发生变化，已取消写入，请重试")
 	}
-	return os.Rename(tmp.Name(), "go.mod")
+	return os.Rename(tmp.Name(), path)
 }

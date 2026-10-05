@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mattn/go-colorable"
+	"github.com/mattn/go-isatty"
 	"golang.org/x/net/context"
 	"wesure.cn/msf/errors"
 )
@@ -144,24 +146,29 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 		remote: *remote, pushURL: pushURL, out: out,
 	}
 	defer func() {
+		var summary []string
 		if err := session.cleanup(); err != nil {
+			summary = append(summary, "临时资源清理失败")
 			if result == nil {
 				result = err
 			} else {
 				result = errors.New(fmt.Sprintf("%+v；清理失败：%+v", result, err))
 			}
+		} else {
+			summary = append(summary, "临时 worktree、目录和引用已清理")
 		}
 		if len(session.succeeded) > 0 {
-			fmt.Fprintf(out, "已推送成功：%s\n", strings.Join(session.succeeded, "、"))
+			summary = append(summary, "已推送成功："+strings.Join(session.succeeded, "、"))
 		} else {
-			fmt.Fprintln(out, "没有已确认推送成功的目标分支。")
+			summary = append(summary, "没有已确认推送成功的目标分支")
 		}
 		if len(session.synced) > 0 {
-			fmt.Fprintf(out, "本地已拉取：%s\n", strings.Join(session.synced, "、"))
+			summary = append(summary, "本地已拉取："+strings.Join(session.synced, "、"))
 		}
 		if len(session.skipped) > 0 {
-			fmt.Fprintf(out, "本地更新已跳过：%s\n", strings.Join(session.skipped, "、"))
+			summary = append(summary, "本地更新已跳过："+strings.Join(session.skipped, "、"))
 		}
+		fmt.Fprintln(out, strings.Join(summary, "，")+"。")
 	}()
 	// 从实际推送地址读取快照，并隔离临时引用，不更新本地分支、远端跟踪分支或 FETCH_HEAD。
 	fmt.Fprintf(out, "读取远端 %s 的分支快照...\n", *remote)
@@ -186,7 +193,6 @@ func run(ctx context.Context, args []string, out io.Writer) (result error) {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "全部目标预检查通过，开始逐个合并并推送。")
 	for _, target := range targets {
 		if err := session.mergeAndPush(branches[0], source, target); err != nil {
 			return errors.New(fmt.Sprintf("处理目标分支 %s 失败，已停止后续操作：%+v", target.name, err))
@@ -247,52 +253,68 @@ func (g gitClient) optionalCommit(ref string) (string, error) {
 
 func (s *mergeSession) preflight(source string, names []string) ([]mergeTarget, error) {
 	var targets []mergeTarget
+	statuses := []string{"预检测分支"}
+	var details bytes.Buffer
+	defer func() {
+		fmt.Fprintln(s.out, strings.Join(statuses, "，"))
+		if details.Len() > 0 {
+			fmt.Fprint(s.out, details.String())
+		}
+	}()
 	failed := false
 	for _, name := range names {
 		if err := s.git.ctx.Err(); err != nil {
+			statuses = append(statuses, "预检查已中断。")
 			return nil, err
 		}
 		head, err := s.git.optionalCommit(s.refs + name)
 		if err != nil {
+			statuses = append(statuses, "[失败] "+name, "预检查已停止。")
 			return nil, err
 		}
 		if head == "" {
-			fmt.Fprintf(s.out, "[失败] %s：远端分支不存在\n", name)
+			statuses = append(statuses, "[失败] "+name)
+			fmt.Fprintf(&details, "[失败] %s：远端分支不存在\n", name)
 			failed = true
 			continue
 		}
 		stdout, stderr, code, err := s.git.execute("merge-tree", "--write-tree", "--name-only", "--messages", "-z", head, source)
 		if code != 0 && code != 1 {
-			fmt.Fprintf(s.out, "[失败] %s：git merge-tree 执行失败：%+v\n%s\n", name, err, stderr)
+			statuses = append(statuses, "[失败] "+name)
+			fmt.Fprintf(&details, "[失败] %s：git merge-tree 执行失败：%+v\n%s\n", name, err, stderr)
 			failed = true
 			continue
 		}
 		tree, files, messages, parseErr := parseMergeTree(stdout)
 		if parseErr != nil {
-			fmt.Fprintf(s.out, "[失败] %s：%+v\n", name, parseErr)
+			statuses = append(statuses, "[失败] "+name)
+			fmt.Fprintf(&details, "[失败] %s：%+v\n", name, parseErr)
 			failed = true
 			continue
 		}
 		if code == 1 {
 			failed = true
-			fmt.Fprintf(s.out, "[冲突] %s\n", name)
+			statuses = append(statuses, "[冲突] "+name)
+			fmt.Fprintf(&details, "[冲突] %s\n", name)
 			for _, file := range files {
-				fmt.Fprintf(s.out, "  文件/路径：%s\n", strconv.Quote(file))
+				fmt.Fprintf(&details, "  文件/路径：%s\n", strconv.Quote(file))
 			}
 			for _, message := range messages {
-				fmt.Fprintf(s.out, "  %s\n", strings.TrimSpace(message))
+				fmt.Fprintf(&details, "  %s\n", strings.TrimSpace(message))
 			}
 			if len(files) == 0 {
-				fmt.Fprintln(s.out, "  Git 未提供具体文件列表，请查看上述冲突详情。")
+				fmt.Fprintln(&details, "  Git 未提供具体文件列表，请查看上述冲突详情。")
 			}
 			continue
 		}
-		fmt.Fprintf(s.out, "[通过] %s\n", name)
+		statuses = append(statuses, "[通过] "+name)
 		targets = append(targets, mergeTarget{name: name, head: head, tree: tree})
 	}
 	if failed {
+		statuses = append(statuses, "预检查未全部通过，已停止操作。")
 		return nil, errors.New("预检查未全部通过，未创建合并 worktree，未合并或推送任何分支")
 	}
+	statuses = append(statuses, "全部目标预检查通过，开始逐个合并并推送。")
 	return targets, nil
 }
 
@@ -335,7 +357,7 @@ func parseMergeTree(output string) (string, []string, []string, error) {
 }
 
 func (s *mergeSession) mergeAndPush(sourceName, source string, target mergeTarget) error {
-	fmt.Fprintf(s.out, "[合并] %s -> %s\n", sourceName, target.name)
+	s.printMerge(sourceName, target.name)
 	if _, err := s.git.command("worktree", "add", "--detach", s.worktree, target.head); err != nil {
 		return err
 	}
@@ -356,41 +378,56 @@ func (s *mergeSession) mergeAndPush(sourceName, source string, target mergeTarge
 	if strings.TrimSpace(tree) != target.tree {
 		return errors.New("实际合并结果与预检查不一致，已取消该分支推送")
 	}
-	fmt.Fprintf(s.out, "[推送] %s\n", target.name)
+	fmt.Fprintf(s.out, "[推送] %s", target.name)
 	// 使用确切提交和完整目标引用，不依赖 upstream 或 push.default，不强制推送。
 	if _, err := s.git.command("push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", "--",
 		s.pushURL, strings.TrimSpace(head)+":refs/heads/"+target.name); err != nil {
+		fmt.Fprintln(s.out)
 		return err
 	}
 	s.succeeded = append(s.succeeded, target.name)
-	fmt.Fprintf(s.out, "[已推送] %s\n", target.name)
+	fmt.Fprintf(s.out, "，[已推送] %s", target.name)
 	if err := s.pullLocalTarget(target.name); err != nil {
 		return errors.New(fmt.Sprintf("远端分支 %s 已推送，但本地拉取失败：%+v", target.name, err))
 	}
 	return s.removeWorktree()
 }
 
+func (s *mergeSession) printMerge(source, target string) {
+	line := fmt.Sprintf("[合并] %s -> %s", source, target)
+	writer := s.out
+	file, terminal := s.out.(*os.File)
+	_, noColor := os.LookupEnv("NO_COLOR")
+	if terminal && !noColor && os.Getenv("TERM") != "dumb" && (isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd())) {
+		writer = colorable.NewColorable(file)
+		line = "\x1b[32m" + line + "\x1b[0m"
+	}
+	fmt.Fprintln(writer, line)
+}
+
 func (s *mergeSession) pullLocalTarget(name string) error {
 	localHead, err := s.git.optionalCommit("refs/heads/" + name)
 	if err != nil {
+		fmt.Fprintln(s.out)
 		return err
 	}
 	if localHead == "" {
-		fmt.Fprintf(s.out, "[跳过本地更新] %s：本地分支不存在\n", name)
+		fmt.Fprintf(s.out, "，[跳过本地更新] %s：本地分支不存在\n", name)
 		s.skipped = append(s.skipped, name)
 		return nil
 	}
 	worktree, err := s.branchWorktree(name)
 	if err != nil {
+		fmt.Fprintln(s.out)
 		return err
 	}
 	if worktree != "" {
-		fmt.Fprintf(s.out, "[跳过本地更新] %s：分支正在工作区 %s 中使用，请在该工作区手动拉取\n", name, worktree)
+		fmt.Fprintf(s.out, "，[跳过本地更新] %s：分支正在工作区 %s 中使用，请在该工作区手动拉取\n", name, worktree)
 		s.skipped = append(s.skipped, name)
 		return nil
 	}
 	git := gitClient{ctx: s.git.ctx, dir: s.worktree}
-	fmt.Fprintf(s.out, "[拉取本地分支] %s\n", name)
+	fmt.Fprintf(s.out, "，[拉取本地分支] %s\n", name)
 	// 复用本次创建的 worktree；Git 自身也会拒绝检出被其他 worktree 占用的分支。
 	if _, err := git.command("-c", "submodule.recurse=false", "switch", "--no-guess", name); err != nil {
 		return err
@@ -477,6 +514,5 @@ func (s *mergeSession) cleanup() error {
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "；"))
 	}
-	fmt.Fprintln(s.out, "临时 worktree、目录和引用已清理。")
 	return nil
 }
