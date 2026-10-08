@@ -426,7 +426,7 @@ func selectModule(out io.Writer, modules []moduleConfig, byPath map[string][]mod
 		return -1, errors.New("交互选择需要终端，请使用 gitmod list 查看列表，再通过简写或序号更新")
 	}
 	lines := alignRows(moduleRows(modules, byPath))
-	return selectCircular("    "+lines[0], lines[1:], 10,
+	return selectCircular("    "+lines[0], lines[1:], 30,
 		"↑/k 上一项，↓/j/Ctrl+N 下一项（循环），空格或回车更新，Esc / Ctrl+C 取消",
 		selectionKeyReader{readline.Stdin}, promptWriter{colorable.NewColorable(file)}, useColor(out))
 }
